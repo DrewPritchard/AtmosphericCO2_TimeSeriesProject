@@ -1,0 +1,651 @@
+---
+title: "PSTAT 274 Project"
+author: "Michael Wang"
+date: "February 25, 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, echo=F, warning=F}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(tidyverse) 
+library(tseries)
+library(qpcR)
+library(tidyverse)
+library(latex2exp)
+library(fma)
+library(astsa)
+library(MASS)
+library(TSA)
+library(kableExtra)
+library(GeneCycle)
+plot.roots <- function(ar.roots=NULL, ma.roots=NULL, size=2, angles=FALSE, 
+                       special=NULL, sqecial=NULL,my.pch=1,first.col="blue",
+                       second.col="red",main=NULL)
+  {xylims <- c(-size,size)
+      omegas <- seq(0,2*pi,pi/500)
+      temp <- exp(complex(real=rep(0,length(omegas)),imag=omegas))
+      plot(Re(temp),Im(temp),typ="l",xlab="x",ylab="y",xlim=xylims,ylim=xylims,main=main)
+      abline(v=0,lty="dotted")
+      abline(h=0,lty="dotted")
+      if(!is.null(ar.roots))
+        {
+          points(Re(1/ar.roots),Im(1/ar.roots),col=first.col,pch=my.pch)
+          points(Re(ar.roots),Im(ar.roots),col=second.col,pch=my.pch)
+        }
+      if(!is.null(ma.roots))
+        {
+          points(Re(1/ma.roots),Im(1/ma.roots),pch="*",cex=1.5,col=first.col)
+          points(Re(ma.roots),Im(ma.roots),pch="*",cex=1.5,col=second.col)
+        }
+      if(angles)
+        {
+          if(!is.null(ar.roots))
+            {
+              abline(a=0,b=Im(ar.roots[1])/Re(ar.roots[1]),lty="dotted")
+              abline(a=0,b=Im(ar.roots[2])/Re(ar.roots[2]),lty="dotted")
+            }
+          if(!is.null(ma.roots))
+            {
+              sapply(1:length(ma.roots), function(j)abline(a=0,b=Im(ma.roots[j])/Re(ma.roots[j]),
+                                                           lty="dotted"))
+            }
+        }
+      if(!is.null(special))
+        {
+          lines(Re(special),Im(special),lwd=2)
+        }
+      if(!is.null(sqecial))
+        {
+          lines(Re(sqecial),Im(sqecial),lwd=2)
+        }
+        }
+```
+
+
+\tableofcontents
+\newpage
+
+
+\begin{center}
+\section{Abstract}
+A controversial topic of today is the effect of pollution on the biosphere. From climate change to the death of the great barrier reef it seems that a key argument is that industrialized societies are manufacturing and irresponsibly ignoring their $CO_2$ emissions. Throughout this project we answer the question of just how much the $CO_2$ concentration our atmosphere has been changing in recent decades. We also dive into how - if at all - the concentration of $CO_2$ behaves on a micro-scale, aka monthly basis, rather than just its behavior between a several decade period. In order to address these questions, we use time series analysis consisting of exploratory data analysis, data transformation, differencing, seasonal autoregressive integrated moving average model selection, residual diagnostic checking and spectral analysis. Finally, to check any predictive power we may have, we forecasted a year ahead of our analyzed data.
+\end{center}
+
+
+```{r}
+# Load the data set
+# don't need the first column as it just represents year and quarter
+# rename the column because the name is too long
+# change 'data' from data.frame to time series data
+data <- read_csv("C:/Users/hotch/Downloads/co2-ppm-mauna-loa-19651980.csv")
+data <- data[-nrow(data),2]
+colnames(data) <- "CO2"
+data <- ts(data, frequency = 12, start = 1965)
+```
+
+
+# 1 Introduction
+
+
+In 2013 NASA scientists detected C02 levels of above 400ppm from the Mauna Loa Observatory in Hawaii.[1]. For scientists, this was noted as an unfortunate milestone.The rapid rise in C02 levels in our atmosphere for the past century has contributed to many catastophic climate disastors. Understanding in what ways the C02 levels have been incresing throguhout time is an important aspect to solving the global crisis of climate change. 
+
+We decided to analyze the C02 levels recorded monthly from the Mauna Loa Observatory in Hawaii during the years 1965-1980 [2]. This data set consists of 192 data points where the C02 levels were measured monthly. Taking out the last year of data points (12 data points), our training data set consisted of 180 points. 
+
+Using Rstudio, we Box-cox transformed, de-trended, and de-seasonalized the time series values. After making sure our data was stationary we went ahead with selecting an appropraite SARIMA model to describe our data. While verifying our models are invertible and stationary, we used AICc and BIC values to narrow down our search for an ideal model. 
+
+Next we tested the models with different diagnostic checks including Shapiro-Wilk test for normality, Ljung-box test for serial correlation and other tests to ensure our final model would be valid. Since 2 of our models passed the necessary diagnostic checks, we chose the model based on the lowest BIC values with happened to be a $SARIMA(0,1,1)$x$(1,1,0)_{12}$
+
+Afterwords we forecasted a year ahead and made sure our forecasts coincices with the obsereved C02 levels that year. Finally we conducted spectral analysis on the stationary data and concluded that the data can be modeled using a linear combinations of 12 sinisuoids. 
+
+# 2 Data Exploratory Analysis
+
+## 2.1 Preliminary Exporation
+
+The data we have contains two variables: the Month which also includes the year in which it was recorded and quarter as well as production of clay data in million units. We have 155 observations in total and will reserve the last 15 observations as our testing data for forecasting. 
+
+```{r, fit.align = 'center', fig.height=4, fig.width = 6}
+#Plot time series data
+plot(data,
+     main = 'Atmospheric CO2 Concentration',
+     ylab = 'CO2 Concentration(ppm)',
+     xlab = 'Year')
+title(sub = 'Figure 1: Monthly Concentration of Atmospheric CO2, Jan 1965 - Dec 1980')
+```
+
+
+The plot clearly shows an upward trend and yearly seasonality. The presence of seasonality is interesting because it displays evidence that concentration of $CO_2$ is not constant throughout the year; for some reason it spikes in the spring and reaches a minimum in the fall. We will need to control for this seasonality soon in order to reach a stationary process model with which we can use to forecast.
+
+Fortunately, we don't see a clear display of non-constant variance. The yearly increasing and decreasing of $CO_2$ levels are close to if not the same length from each other over the course of  data set.
+
+To more closely examine the seasonal pattern we have observed, we create a monthly seasonal plot for each year.
+
+
+```{r, fit.align = 'center', fig.height=5, fig.width = 7}
+# Plot seasonal data
+seasonplot(data,12,col=rainbow(3),
+           main="Seasonal Plot",
+           ylab="CO2 Concentration(ppm)",
+           xlab="Month",
+           year.labels.left = T)
+
+title(sub="Figure 2: Seasonal Plot of Monthly CO2 Concentration")
+```
+
+By seperating each year's data and plotting them in parallel we see what was aforementioned: a gradual increase in ppm from October to May, then a gradual decrease from May to October. The pattern is repeated every year, leading to the conclusion of a strong seasonal component in our data.
+
+It is also apparent that the $CO_2$ levels for each month within a given year is higher than the previous month. This result coinciedes with the upward trend seen in our data.
+
+## 2.2 Decomposition 
+
+By splitting our data into three distinct parts - trend, seasonality, and cyclical components - we can further explore the nuances of the time series.???
+
+If we let $Y_t$ be our$CO_2$data where $Y_1$ = Jan 1965, $Y_2$ = Feb 1965, etc. Then we can write a decomposition model of our data as $Y_t = m_t + s_t + Z_t$, where $m_t$ is the trend component, $s_t$ is the seasonal component, and $Z_t$ is our stationary process also known as the error term in our model. 
+
+```{r remedy03, fit.align = 'center', fig.height=3.5, fig.width = 7}
+# seasonal plot and decomposition plot
+decomposed <- decompose(data)
+autoplot(decomposed, main="Decomposition Plots of CO2 Concentration Data") + xlab("Year")
+```
+
+Our decomposition plot highlights what we discussed in the previous section. A clear seasonal increase and decrease, an upward trend, and a remainder that appears stationary. 
+
+# 3 Transformations
+
+## 3.1 Variance Stabilization via Box-Cox
+
+Although there was no obvious heteroskedacity(non-constant variance) when we originally plotted our data, we still want to stabelize and reduce our variance as much as possible.
+
+A simple and often effective way to stabilize variance across time is to apply a transformation on the data. We used the Box-Cox method to find a value of $\lambda$ that determines the power transformation to perform on our data. This value is chosen based on the maximized profile log-likelihood. For seasonal data, a linear time trend with seasonal dummy variables is used.
+
+```{r remedy04, fig.height=3.5, fig.width=7}
+# perform box-cox transformation
+boxC <- boxcox(data~as.numeric(1:length(data)))
+lam <- boxC$x[which.max(boxC$y)]
+```
+
+Our log-likelihood is maximized when $\lambda$ = `r lam` and we transform our data into $Y_t^{-1.3131313}$.
+
+```{r, fig.height=3.5, fig.width=7}
+data.bc <- data^lam # model transormation
+#Assign data points for modeling
+data.tr = ts(data.bc[1:180,], frequency = 12, start = 1965)
+
+#Assign points for testing
+data.test = ts(data.bc[181:192,], frequency = 12, start = 1980)
+# optimal lambda
+
+# plot transformed data and original side by side
+par(mfrow=c(1,2))
+plot(data.bc,
+     main="Box-Cox Transformed Data", 
+     ylab="CO2 (ppm)",
+     xlab="Year Recorded",
+     type="l")
+plot(data, main="Original Data", 
+     ylab="CO2 (ppm)",
+     xlab="Year Recorded",
+     type="l")
+```
+
+
+
+
+## 3.2 Removing Seasonality and Trend
+
+In order to remove the seasonality and trend from our data, we apply the differencing method. First, we decided to remove the seasonailty from out data. 
+
+Since we obsereve a pattern that cycles through every 12 months, we difference the data at lag 12.
+In figure 6a we see the differenced data at lag 12, but there is still a trend that in obsereved. Thus we must difference the data one more time, at lag 1. 
+
+We notice that the data appears to be stationary after differecing the data appropriately. To make sure we have differenced the data a proper number of times we decide to difference the data once and we can go back to our original differenced data. 
+
+Since we notice a increase in variance after difference the de-seasonzlized data at lag 2, we decide to keep the lag at 1. To ensure we have a stationary $X_t$ we apply the Augmented Dickey-Fuller Test. The null hypothesis of this test is that $X_t$ is not stationary. We observe a p-value of 0.01, thus rejecting that null hypothesis of the Dickey-Fuller Test of non-stationarity. Therefore we can continue with our project with a de-seasonalized and de-trended $X_t$.
+
+
+```{r, fig.height=3.5, fig.width=7}
+data.deseason <- diff(data.tr, lag=12) # de-seasonalized data
+
+# plotting our data
+par(mfrow=c(1,2))
+# plot of deseasonalized data with line showing trend
+plot(data.deseason, ylab=NULL, xlab="Time in Months", main=expression(nabla[12]~X[t]^-1.313))
+abline(lm(data.deseason~as.numeric(1966:(length(data.deseason)+1965)), data=data.deseason))
+title(sub="(Figure 6: Plot of CO2 Concentration Differenced at Lag 12)")# plot of deseasonalized and detrended data
+data.cl <- diff(data.deseason, lag=1) # remove trend
+# var(data.cl) # check variance
+
+# check if variance reduces if we difference once more, it does not
+# var(diff(data.cl))
+
+# plot of data after its been cleaned
+plot(data.cl, ylab=NULL, xlab="Time in Months", 
+     main=expression(nabla~nabla[12]~X[t]^-1.313))
+abline(lm(data.cl~as.numeric(1966:(length(data.cl)+1965))))
+title(sub="(Figure 7: Plot of CO2 Concentration Differenced at Lag 12 and 1)")
+```
+
+```{r}
+# APPENDIX
+kable(
+  cbind(var(data.cl),var(diff(data.cl, 1))),
+  col.names = c('Differenced at 12,1','Differenced at 12,1,1'), format="markdown")
+```
+
+
+
+# 4 Model Identification, Selection, and Estimation
+
+## 4.1.1 Identify Seasonal Order: P, D, Q
+
+
+```{r, fig.height=4, fig.width=7}
+# Use this instead?
+ggtsdisplay(data.cl, main = "", lag.max = 70)
+
+```
+
+By looking at lags 12, 24, 36, ..., on the ACF plot, we can determine that it tails off from lag 12 onward. Hence we have an AR part with P = 1.
+
+For the PACF plot it appears to just completely cut off at lag 1. Again indicating that we have a an SAR(1) component in our model. This also lets us know that there is **no** seasonal MA part, i.e. Q = 0.
+
+While this is a subjective decision, it is an important piece for our model. It is possible that another researcher would conclude the PACF actually tails off somewhat from lag 12 onward. However we stick to our original assumption that we have: 
+ 
+ \begin{center}
+ Seasonal Part $\Rightarrow (1, 1, 0)_{12}$ 
+ \end{center}
+
+
+
+## 4.1.2 Identify Inter-Seasonal Order: p, d, q
+
+The next step for us is to identify the between-season order of our model. We already know that d = 1 because of the second difference at lag 1 we did in section 3.3. To find p and q we zoom in on the ACF and PACF plots.
+
+
+```{r}
+# zoomed acf pacf
+par(mfrow=c(1,2))
+acf(data.cl, main=NULL, lag.max=11)
+title(sub='Figure 9: ACF of Non-Seasonal Process')
+  # ACF has spikes at lag 0 and 1 
+  # spikes seems close enough to 95% interval to be assumed 0
+pacf(data.cl, main=NULL, lag.max=11)
+title(sub='PACF of Non-Seasonal Process')
+  # PACF cuts off after 1: 
+      # AR(1)
+  # PACF has spikes up to 11. test all values of p le 11
+```
+
+
+From our zoomed ACF and PACF plots we can see that we have spikes at lags 1 and 3 as well as 9 and 11. We will assume that the spikes at lags 9 and 11 are outliers in our dataset. PACF tails off and ACF cuts off after lag 3, which can be interpreted as an $MA(3)$ process ($p=0, q=3$). We should also consider the possibility where we have an $ARMA(p,q)$ process where both ACF and PACF tail off after lag 3 i.e. $max(p,q)=3$. Because we're working with sample data, the zoomed ACF and PACF plots may not accurately depict the theoretical model. Thus we test all combinations of $p$ and $q$ for $p,q \in \{0,1,2,3\}$ resulting in 16 preliminary models.
+
+## 4.2 Model Selection
+
+From our preliminary models, we select the best 2 based off Akaike's corrected information criterion (AICc) and Bayesian information criterion (BIC). Both information criterion measure the "quality"" of a statistical model for a given dataset relative to other models by using goodness of fit and penalizing for model complexity. We wish to select the two models with the lowest AICc and BIC values.
+
+Looking at our two tables of AICc and BIC values below, we see that the model with $p=0,q=3$ gives us the smallest AICc value and the model with $p=0, q=1$ gives us the smallest BIC value. This is expected as BIC has a larger penalty parameter for model complexity and thus favors a smaller model.
+
+Therefore, our two models selected based on AICc and BIC are:
+
+$$
+\begin{split}
+\text{Model A: } SARIMA&(0,1,3) \times (1,1,0)_{12} \\
+\text{Model B: }SARIMA&(0,1,1) \times (1,1,0)_{12} 
+\end{split}
+$$
+
+```{r, warning=FALSE}
+# get AICc and BIC matrix
+AICc <- BIC.s <- matrix(NA, nrow=4, ncol=4)
+for(p in 0:3){
+  for(q in 0:3){
+    AICc[p+1,q+1] <- sarima(data.tr, p, 1, q, P = 0, D = 1, Q = 1,S =  12 , details = FALSE)$AICc
+    BIC.s[p+1,q+1] <- sarima(data.tr, p, 1, q, P = 0, D = 1, Q = 1,S =  12 , details = FALSE)$BIC
+  }
+}
+AICc <- data.frame(AICc, row.names = c("AR(0)","AR(1)","AR(2)","AR(3)"))
+BIC.s <- data.frame(BIC.s, row.names = c("AR(0)","AR(1)","AR(2)","AR(3)"))
+#AICc==min(AICc)
+#BIC.s==min(BIC.s)
+kable(AICc, caption="AICc values of potential SARIMA models",
+      col.names = c("MA(0)","MA(1)","MA(2)","MA(3)"), format="markdown")
+kable(BIC.s, caption="AICc values of potential SARIMA models",
+      col.names = c("MA(0)","MA(1)","MA(2)","MA(3)"), format="markdown")
+```
+
+
+
+## 4.2 Model Estimation
+
+Now that we have chosen two models with the best information criterion values, we need to estimate the coefficients and parameters. We are under the assumption that the data has zero mean, and that we know p and q. We will estimate the coefficients in our models using the maximum likelihood method. The results are shown below:
+
+
+```{r}
+fitA <- arima(data.tr, order=c(0,1,3), seasonal = list(order=c(1,1,0), period=12),
+              method="ML")
+fitB <- arima(data.tr, order=c(0,1,1), seasonal = list(order=c(1,1,0), period=12),
+              method="ML")
+coefA <- unlist(fitA$coef)
+coefB <- unlist(fitB$coef)
+coeffs <- cbind(coefA, c(coefB[1],NA,NA,coefB[2])) %>% 
+  data.frame(row.names = c("MA(1)","MA(2)","MA(3)","SAR(1)"))
+kable(coeffs, format="markdown", digits = 4,
+      col.names = c("Model A", "Model B"))
+```
+
+Thus our fitted models have the algebraic form:
+
+$$
+\begin{split}
+\text{Model A: } SARIMA(0,1,3) \times (1,1,0)_{12} \\
+(1+.5072B^{12})Y_t = (1-0.2177B)&(1-0.0133B)(1-0.1744B)Z_t \\ 
+Z_t \sim N(0, 4.435e-13)\\
+\text{Model B: } SARIMA(0,1,1) \times (1,1,0)_{12} \\
+(1+.5225B^{12})Y_t = (1-0.2105B)&Z_t \\
+Z_t \sim N(0,4.589e-13)
+\end{split}
+$$
+
+where $Y_t = \nabla\nabla^{12}X_t^{-1.313}$. 
+
+
+Next we check for causality and invertibility by examining the roots of our polynomial. Causality and invertibility are implied when the roots of our polynomial in the AR and MA, respectively, lie outside the unit circle. From the plots below we can see that all the polynomial roots (red) lie outside the unit. Also, note that the absolute value of the polynomial coefficients are all less than 1. Thus we can conclude that both model A and model B are causal and invertible.
+
+
+```{r}
+#model A
+par(mfrow=c(2,2))
+plot.roots(NULL, polyroot(c(1,-0.2177,0.0133,-0.1744)), main="roots of MA for model A")
+plot.roots(NULL, polyroot(c(1,.5082)), main="roots of SAR for model A")
+#model B
+plot.roots(NULL, polyroot(c(1,-.2105)), main="roots of MA for model B", size=5)
+plot.roots(NULL, polyroot(c(1,.5225)), main="roots of SAR for model B")
+```
+
+
+# 5 Diagnostic Checks
+
+After identifing the two models with the smallest AICc and BIC scores, we ran diagnostic tests to make sure our models are reliable, valid and accurte. We tested for normality of the errors terms, independence via lack of serial correlation, and detecting heteroscedasticity. 
+
+## Normality checks
+
+We decided to see if the error terms were normally distrubuted using 3 different checks. First we made a histogram of the residuals of both models and noticed that they were evenly distrubed and symmetrical similar to a gaussian distribution. 
+
+```{r Histo, echo = FALSE}
+residA <- residuals(fitA)
+residB <- residuals(fitB)
+par(mfrow=c(1,2))
+hist(residA, main="Histogram of Residuals for Model A", xlab = "residuals")
+hist(residB, main="Histogram of Residuals for Model B", xlab = "residuals")
+```
+
+
+Next we graphed a Normal Q-Q plot of the standardized residuals and noticed they roughly lie on a straight line. This indiciated to us that since the sample quantiles conicde with the theoretical quantlies, the residuals were evenly distributed. 
+
+```{r QQ, echo = FALSE}
+par(mfrow=c(1,2))
+qqnorm(residA, main="Normal Q-Q Plot for Model A")
+qqline(residA)
+qqnorm(residB, main="Normal Q-Q Plot for Model B")
+qqline(residB)
+```
+
+
+In order to confirm our results from the our histograms and Q-Q plots we performed the Sapiro Wilk test. The null hypothesis for the Shapiro Wilk test is that the error terms are normally distributed. The p-values for both of our models are > 0.05, thus we would fail to reject the null hypothesis, thus confirming that both of our models have error terms that are normally distributed.  
+
+```{r}
+sharpA <- shapiro.test(residA)$p.value
+sharpB <- shapiro.test(residB)$p.value
+sharp <- data.frame(cbind(sharpA, sharpB), row.names = "P-values")
+kable(sharp, format="markdown", digits = 4,
+      col.names = c("Model A", "Model B"))
+```
+
+
+## Detectiong of Serial Correlation (Independence checking)
+
+When analyzing time series data it is important that the error terms are independent of one another and there is no correlation between observations over different lags. To ensure we do not have this problem known as serial correlation we use the Ljung-Box and Box-Pierce test. The null hypothesis for these tests of is that serial correlation does not exist. Looking at our table x, we do not see any p-values less than 0.05, thus we would fail to detect serial correlation in either model and can conclude the error terms are indeed independent. 
+
+
+```{r}
+# diagmostic checks
+bpA <- Box.test(residA, lag=12, type="Box-Pierce", fitdf=3)$p.value
+lbA <- Box.test(residA, lag=12, type="Ljung", fitdf=3)$p.value
+
+bpB <- Box.test(residB, lag=12, type="Box-Pierce", fitdf=1)$p.value
+lbB <- Box.test(residB, lag=12, type="Ljung", fitdf=1)$p.value
+boxes <- rbind(c(bpA,lbA),c(bpB,lbB)) %>% data.frame(row.names = c("Model A","Model B"))
+kable(boxes, format="markdown", digits = 4, col.names = c("Box-Pierce","Ljung-Box"))
+```
+
+## Detection of Heteroscedasticity (Checking for constant variance)
+
+One of the diagnostic checks that a researcher must make regarding a time series data set is the error terms must not change over time. In order to make sure our model does not have heteroscedasticity we need to analyze the ACF and PACF plots of the squared residuals. If we see that most of our error terms are within the 95% White Noise limits then we can assume the error terms experience constant variance. Looking at figure x we notice that most of our error terms are indeed within the limits denoted by the blue dotted lines. Thus we can conclude that we do not detect heteroscedasticity in either one of our models. 
+
+
+```{r ACF PACF variance, echo = FALSE}
+
+par(mfrow=c(2,2))
+# APPENDIX
+# Model A
+ggtsdisplay(residA ,main="",xlab="Year") 
+acfa=ggAcf(residA^2, lag.max = 50,main="") 
+pacfa=ggPacf(residA^2, lag.max = 50,main="") 
+
+# Model B
+ggtsdisplay(residB ,main="",xlab="Year") 
+acfb=ggAcf(residB^2, lag.max = 50,main="") 
+pacfb=ggPacf(residB^2, lag.max = 50,main="") 
+```
+
+
+# 6 Spectral Analysis
+
+We perform spectral analysis on our stationary time series $Y_t=\nabla\nabla_{12}X_t$ to determine whether hidden periodicities exist within our data. We will decompose $\{Y_t\}$ into a sum of sinuoidal components with uncorrelated coefficients. The model we will be fitting then has the form:
+
+$$
+Y_t = \mu + \sum_{j=1}^{k} \left( A_j\text{sin}(2\pi \nu_jt) +B_j \text{cos}(2\pi \nu_jt)\right)
+$$
+
+where $\nu_j$ denotes the frequency. 
+
+## 6.1 Periodogram
+
+The periodogram graphs the relative importance of frequency values that will be used when fitting our data to the model above. Using the periodogram we can identify a subset of significant $\nu_j$'s, as using all values of $\nu_j$ in our estimation would be a long and arduous process. Shown below is a plot of our periodogram based on the stationary time series $\{Y_t\}$ defined earlier. 
+
+```{r}
+# Spectral
+t <- 1:167
+w <- 2*pi*t
+p <- periodogram(data.cl)
+TSA::periodogram(data.cl, main="Periodogram on Stationary Data")
+k <- 10
+freqw <- p$freq[order(p$spec, decreasing = TRUE)][1:k]
+m <- c()
+for(i in 1:k){
+  j <- cbind(cos(w*freqw[i]),sin(w*freqw[i]))
+  m <- cbind(m,j)
+}
+m <- as.data.frame(m)
+
+z <- lm(data.cl~., data=m)
+coeffs <- z$coefficients
+y <- coeffs[1] + coeffs[2]*m[1] + coeffs[3]*m[2] + coeffs[4]*m[3] + coeffs[5]*m[4] +
+  coeffs[6]*m[5] + coeffs[7]*m[6] + coeffs[8]*m[7] + coeffs[9]*m[8] + coeffs[10]*m[9] +
+  coeffs[11]*m[10] + coeffs[12]*m[11] + coeffs[13]*m[12] + coeffs[14]*m[13] +
+  coeffs[15]*m[14] + coeffs[16]*m[15] + coeffs[17]*m[16] + coeffs[18]*m[17] + 
+  coeffs[19]*m[18] + coeffs[20]*m[19] + coeffs[21]*m[20] 
+```
+
+We can clearly see multiple peaks in our periodogram, thus we choose $k=10$ to get the ten most dominant values of $\nu_j$.
+
+Next, we use regression to estimate our coefficients $A_j$ and $B_j$. Our estimates are as follows:
+
+$$
+\begin{split}
+A_0 = -1.215131e-08
+\end{split}
+$$
+```{r}
+A_0 <- coeffs[1]; As <- coeffs[seq(2,20,2)]; Bs <- coeffs[seq(3,21,2)]
+ab <- rbind(as.character(round(As,9)),as.character(round(Bs,9)))
+rownames(ab) <- c("A","B")
+kable(ab, format = "markdown", col.names = c("1","2","3","4","5","6","7","8","9","10"))
+```
+
+
+## 6.2 Fisher's Test
+
+Often times there are hidden periodicities within our data. We want to test the presence of these by using Fisher's test on our model's residuals.
+```{r}
+fisher.g.test(residuals(fitB)) #>0.05 
+```
+
+Doing so we get a p-value of 0.7236. This is much greater than 0.05 and thus we fail to reject the null $H_0$: Residuals are Gaussian White Noise. This is good for us and we can conclude that we have no hidden periodicities.
+
+## 6.3 Kolmogorov-Smirnov Test
+
+The null hypothesis for the Kolomogorov-Smirnov test states that the residuals from our fitted model is normally distributed and the alternative hypothesis states otherwise. The vertical axis in the plot below denotes the cumulative probability density as frequency increases. The dashed lines surrounding the cumulative density represents the $95\%$ confidence region. From our plot we can see that our cumulative probability does not exceed the $95\%$ boundary, thus we can conclude that our residuals are Gaussian White Noise.
+
+```{r}
+cpgram(residuals(z), main="Kolmogorov-Smirnov Test on Residuals")
+```
+
+
+```{r}
+par(mfrow=c(2,1))
+plot(t,as.numeric(unlist(y)),type="l", ylab=expression(X[t]),
+     main="Sine and Cosine Representation")
+plot(data.cl, ylab=NULL, xlab="Time in Months", 
+     main=expression(nabla~nabla[12]~X[t]^-1.3131))
+```
+
+
+# 7 Forecasting
+
+Now that we have a final model that accurately estimates our data we can begin forecasting. The two main objectives in time series analysis is to model and then harness that model's predictive power to get an accurate idea of what the future would entail. Specific to our case, the predictions we make should provide insight on how the concentration of $CO_2$ in our atmosphere will change in the coming years if it continues the pattern it's been following for the last 30+ years.
+
+Because we have a complete model with all parameters estimated, we can predict the next twelve months and use the data we set aside near the beginning of the analysis to compare to our predictions.
+
+The first set of plots depict our predictions on the Box-Cox transformed data: On the left we see the transformed data in black and overlayed atop the last years line is our prediction in red along with both the upper and lower confidence interval limit in blue dashed lines. On the right we can see a zoomed-in version of the same plot to more clearly identify how accurate we were with our predictions.
+
+
+```{r, fig.height=3.5, fig.width=7}
+#FORECAST WITH MODEL 2
+
+pred <- predict(fitB, n.ahead = 12)
+CI.u <- pred$pred + 1.96*pred$se; CI.l <- pred$pred - 1.96*pred$se
+preds <- pred$pred
+
+par(mfrow = c(1,2))
+ts.plot(data.bc, main="", 
+        xlim=c(1965,1981),
+     ylab="CO2 (parts per million", xlab="Time in Years", type="l")
+lines(CI.u, col="blue", lty="dashed")
+lines(CI.l, col="blue", lty="dashed")
+lines(preds, col="red")
+legend(1973, .00052, legend = c("True Values", "Predictions","95% CI"),
+       col=c("black","red","blue"), lty = c(1,2,1), cex = .6)
+
+ts.plot(data.bc, main="", 
+        xlim=c(1979,1981),
+     ylab="CO2 (parts per million", xlab="Time in Years", type="l")
+lines(CI.u, col="blue", lty="dashed")
+lines(CI.l, col="blue", lty="dashed")
+lines(preds, col="red", type = 'b')
+legend(1980, .00051, legend = c("True Values", "Predictions","95% CI"),
+       col=c("black","red","blue"), lty = c(1,2,1), cex=.6)
+title(sub = "Forecasts on Box-Cox transformed data")
+#MSE of predictions
+MSE.bc = sum((preds-data.bc[181:192])**2)/12
+
+```
+
+
+
+Now we show to similar plot with the same schema as before but now we are using our original, untransformed data.
+
+```{r, fig.height=3.5, fig.width=7}
+#Untransform data
+OG.data <- data.bc^(1/lam)
+#Plot original data
+par(mfrow = c(1,2))
+ts.plot(OG.data,
+        main="Predictions: Original Data",
+        ylim = c(318,342),
+        xlim=c(1965, 1981),
+        ylab="CO2 (parts per million",
+        xlab="Time in Years",
+        type="l")
+lines(CI.u^(1/lam), col="blue", lty="dashed")
+lines(CI.l^(1/lam), col="blue", lty="dashed")
+lines((length(data)-11):length(data),data[(length(data)-11):length(data)], col="green")
+lines(preds^(1/lam), col="red")
+
+ts.plot(OG.data,
+        main="Predictions: Original Data (Zoomed)",
+        ylim = c(318,342),
+        xlim=c(1979, 1981),
+        ylab="CO2 (parts per million",
+        xlab="Time in Years",
+        type="l")
+lines(CI.u^(1/lam), col="blue", lty="dashed")
+lines(CI.l^(1/lam), col="blue", lty="dashed")
+lines((length(data)-11):length(data),data[(length(data)-11):length(data)], col="green")
+lines(preds^(1/lam), col="red", type = 'b')
+
+#MSE of predictions
+MSE.og = sum((preds^(1/lam)-OG.data[181:192])**2)/12
+```
+
+These values can be interpreted as real-world predictions. For instance we predicted that on January of 1980 the atmospheric $CO_2$ ppm would be `r preds[1]^(1/lam)` when the true, observed ppm is `r OG.data[181]`. If we take the MSE of our predictions we get `r MSE.og` which is very small relative to our data.
+
+Our model clearly captures the true trend and seasonality of the data. All of our predicted points follow the true points very closely and our 95% confidence interval easily encompasses all of the observed points. This is evidence that our model is successful in estimating the process of $CO_2$ ppm in the atmosphere.
+
+
+# 8 Conclusion
+
+In order to better understand the progression of carbon dioxide emissions into our atmosphere we made it our goal to analyze how the levels of $CO_2$ have changed over the last few decades and how the levels behave on a seasonal basis. To do this, we constructed a time series model that both explains the behavior and can be used to forecast its behavior further into the future.
+
+Our analysis showed an undeniable upward trend in $CO_2$ levels. From 1965 until 1980, every year's measurements were greater than the ones before it. We also found that the concentration is seasonal with a distinct spike and trough in the same month every year. This seasonality component could be explained by shifting tropical winds as well as other factors.
+
+After a tedious investigation using an array of methods, we reached our model: $$ $$
+
+This model satisfied all the assumptions that are expected of a satisfactory time series model. We were also able to identify 10 frequenices using the periodogram of our stationary data and furthuer decompose the series into sinusoids. 
+
+As with any model building process there were subjective decisions that were made throughout project. We realize that other researchers may have chosen other model parameteres to explain the data set we chose to analyze. With that said, looking at the results of our forecasting we are confident our model is suitable to describe the levels of $CO_2$ detected.Our 95% confidence interval encapsulates all the true data and our predicted points are very close to what was actually observed. We hope to see furthur analysis conducted on this data set in order to improve on our SARIMA model. 
+
+
+We would like to thank the TAs for their guidance on our project during section and office hours, and Dr. Sudeep Bapat for his detailed notes and stimulating lectures.
+
+######## extra code stuff
+
+```{r}
+aics <- matrix(NA, nrow = 16, ncol=7)
+i <- 0
+for(p in 0:3){
+  for(q in 0:3){
+    fit <- arima(data.tr, order=c(p,1,q), 
+                             seasonal = list(order=c(1,1,0), period=12), method="ML")
+    aics[i+1, 1] <- p; aics[i+1, 2] <- q
+    aics[i+1, 3] <- AICc(fit)
+    aics[i+1, 4] <- shapiro.test(residuals(fit))$p.value
+    aics[i+1, 5] <- Box.test(residuals(fit), lag=12, type="Box-Pierce", fitdf=p+q)$p.value
+    aics[i+1, 6] <- Box.test(residuals(fit), lag=12, type="Ljung", fitdf=p+q)$p.value
+    aics[i+1, 7] <- BIC(fit)
+    i <- i+1
+  }
+}
+
+aics <- data.frame(aics)
+colnames(aics) <- c("p","q","AICc","Shapiro","BPierce","Ljung", "BIC")
+aics
+AIC.sort <- aics[order(aics$AICc),]
+BIC.sort <- aics[order(aics$BIC),]
+models <- AIC.sort %>% filter(AIC.sort$Shapiro>.05, AIC.sort$BPierce>.05, AIC.sort$Ljung>.05)
+models2 <- BIC.sort %>% filter(AIC.sort$Shapiro>.05, AIC.sort$BPierce>.05, AIC.sort$Ljung>.05)
+models
+models2
+# get best models and stuff
+# 2,1; 1,2; 2,2; 1,1; 0,1; 1,0
+# 0,1; 1,0; 0,0; 1,1; 2,1; 1,2
+```
